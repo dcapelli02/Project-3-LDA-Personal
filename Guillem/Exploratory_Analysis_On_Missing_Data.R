@@ -8,6 +8,8 @@ library(nlme)       # LMM
 library(lme4)       # GLMM 
 library(geepack)    # GEE i WGEE 
 library(mice)       # Sensitivity Analysis
+library(corrplot)   # Matriu Correlació
+
 
 #================================================================#
 
@@ -140,6 +142,8 @@ alz %>%
        y = "% Observed Patients",
        x = "Sex")
 
+# 0 - men, 1 - women
+
 # Age
 alz %>%
   select(age, matches("cdrsb\\d+$")) %>%  
@@ -196,4 +200,271 @@ alz %>%
        y = "% Observed Patients",
        x = "WZC")
 
+# 0 - home, 1 - residence
+
+# MEAN PROFILES BY DROPOUT TIME
+
+dropout_info <- alz_long %>%
+  group_by(id) %>%
+  summarise(
+    first_missing = ifelse(any(is.na(cdrsb)), 
+                           as.character(min(time[is.na(cdrsb)])),
+                           "Complete")
+  )
+
+alz_patterns <- left_join(alz_long, dropout_info, by = "id")
+
+# CDRSB
+alz_patterns %>%
+  group_by(time, first_missing) %>%
+  summarise(mean_cdrsb = mean(cdrsb, na.rm = TRUE), .groups = 'drop') %>%
+  ggplot(aes(x = time, y = mean_cdrsb, color = as.factor(first_missing))) +
+  geom_line(size = 1) +
+  geom_point() +
+  labs(title = "CDRSB Mean's evolution depending on dropout time",
+       x = "Year",
+       y = "CDRSB Mean",
+       color = "Dropout Time") +
+  theme_bw()
+
+# BPRS
+alz_patterns %>%
+  group_by(time, first_missing) %>%
+  summarise(mean_bprs = mean(bprs, na.rm = TRUE), .groups = 'drop') %>%
+  ggplot(aes(x = time, y = mean_bprs, color = as.factor(first_missing))) +
+  geom_line(size = 1) +
+  geom_point() +
+  labs(title = "BPRS Mean's evolution depending on dropout time",
+       x = "Year",
+       y = "BPRS Mean",
+       color = "Dropout Time") +
+  theme_bw()
+
+# TAUPET
+alz_patterns %>%
+  group_by(time, first_missing) %>%
+  summarise(mean_taupet = mean(taupet, na.rm = TRUE), .groups = 'drop') %>%
+  ggplot(aes(x = time, y = mean_taupet, color = as.factor(first_missing))) +
+  geom_line(size = 1) +
+  geom_point() +
+  labs(title = "TAUPET Mean's evolution depending on dropout time",
+       x = "Year",
+       y = "TAUPET Mean",
+       color = "Dropout Time") +
+  theme_bw()
+
+# ABPET
+alz_patterns %>%
+  group_by(time, first_missing) %>%
+  summarise(mean_abpet = mean(abpet, na.rm = TRUE), .groups = 'drop') %>%
+  ggplot(aes(x = time, y = mean_abpet, color = as.factor(first_missing))) +
+  geom_line(size = 1) +
+  geom_point() +
+  labs(title = "ABPET Mean's evolution depending on dropout time",
+       x = "Year",
+       y = "ABPET Mean",
+       color = "Dropout Time") +
+  theme_bw()
+
+cat("This may suggest us that we do not have a MCAR case,")
+cat("Because patients who drop out have higher means than the completers.")
+
+# DROPOUT DEPENDING ON PREVIOUS VALUE
+
+alz_long_lag <- alz_long %>%
+  group_by(id) %>%
+  mutate(
+    is_missing_next = lead(is.na(cdrsb)) 
+  ) %>%
+  filter(time < max(time)) 
+
+ggplot(alz_long_lag, aes(x = as.factor(time), y = cdrsb, fill = is_missing_next)) +
+  geom_boxplot() +
+  labs(title = "Evidence for MAR in CDRSB: Observed vs Missing at next visit",
+       x = "Year",
+       y = "CDRSB",
+       fill = "Missing at t+1?") +
+  scale_fill_manual(values = c("skyblue", "salmon"), na.value="grey") +
+  theme_minimal()
+
+ggplot(alz_long_lag, aes(x = as.factor(time), y = bprs, fill = is_missing_next)) +
+  geom_boxplot() +
+  labs(title = "Evidence for MAR in BPRS: Observed vs Missing at next visit",
+       x = "Year",
+       y = "BPRS",
+       fill = "Missing at t+1?") +
+  scale_fill_manual(values = c("skyblue", "salmon"), na.value="grey") +
+  theme_minimal()
+
+ggplot(alz_long_lag, aes(x = as.factor(time), y = taupet, fill = is_missing_next)) +
+  geom_boxplot() +
+  labs(title = "Evidence for MAR in TAUPET: Observed vs Missing at next visit",
+       x = "Year",
+       y = "TAUPET",
+       fill = "Missing at t+1?") +
+  scale_fill_manual(values = c("skyblue", "salmon"), na.value="grey") +
+  theme_minimal()
+
+ggplot(alz_long_lag, aes(x = as.factor(time), y = abpet, fill = is_missing_next)) +
+  geom_boxplot() +
+  labs(title = "Evidence for MAR in ABPET: Observed vs Missing at next visit",
+       x = "Year",
+       y = "ABPET",
+       fill = "Missing at t+1?") +
+  scale_fill_manual(values = c("skyblue", "salmon"), na.value="grey") +
+  theme_minimal()
+
+cat("This suggest MAR, because the red boxes are higher than the blue ones.")
+cat("The patients that are worse leave the study.")
+
+# DROPOUT MODEL
+
+alz_dropout_model <- alz_long %>%
+  group_by(id) %>%
+  mutate(
+    is_missing = is.na(cdrsb),          
+    prev_cdrsb = lag(cdrsb),            
+    prev_bprs = lag(bprs) ,
+    prev_taupet = lag(taupet),
+    prev_abpet = lag(abpet)
+  ) %>%
+  filter(time > 0) %>% 
+  ungroup()
+
+model_dropout <- glm(is_missing ~ prev_cdrsb + prev_bprs + prev_taupet + prev_abpet +
+                                  trial + sex + age + edu + bmi + inkomen + job + adl_num + wzc + time, 
+                     data = alz_dropout_model, 
+                     family = binomial)
+
+summary(model_dropout)
+
+# Interpretation
+cat("Since we have that the p-value of prev_cdrsb <2e-16***, we have evidence of MAR.")
+cat("Since the estimate for prev_cdrsb = 0.1209 > 0, patients with higher cdrsb tend to dropout more.")
+
+# MCAR TEST
+
+mcar_cdrsb <- mcar_test(alz %>% select(matches("cdrsb\\d+$")))
+mcar_bprs <- mcar_test(alz %>% select(matches("bprs\\d+$")))
+mcar_taupet <- mcar_test(alz %>% select(matches("taupet\\d+$")))
+mcar_abpet <- mcar_test(alz %>% select(matches("abpet\\d+$")))
+
+print(mcar_cdrsb)
+print(mcar_bprs)
+print(mcar_taupet)
+print(mcar_abpet)
+
+cat("Since the p-values of these tests are ~ 0, we conclude that we do not have a MCAR case.")
+
+# COMPARE WITH BASELINE: COMPLETERS VS DROPOUTS 
+
+completers_id <- alz_long %>%
+  filter(time == 6 & !is.na(cdrsb)) %>%
+  pull(patid)
+
+alz_comparison <- alz %>%
+  mutate(
+    Status = ifelse(patid %in% completers_id, "Completer", "Dropout")
+  )
+
+alz_comparison %>%
+  group_by(Status) %>%
+  summarise(
+    N = n(),
+    CDRSB_Base_Mean = mean(cdrsb0, na.rm=TRUE),
+    BPRS_Base_Mean = mean(bprs0, na.rm=TRUE),
+    TAUPET_Base_Mean = mean(taupet0, na.rm=TRUE),
+    ABPET_Base_Mean = mean(abpet0, na.rm=TRUE),
+    Sex_Mean = mean(as.numeric(sex)-1, na.rm = TRUE),
+    Age_Mean = mean(age, na.rm=TRUE),
+    BMI_Mean = mean(bmi, na.rm = TRUE),
+    Inkomen_Mean = mean(inkomen, na.rm = TRUE),
+    Job_Mean = mean(as.numeric(job)-1, na.rm = TRUE),
+    ADL_Mean = mean(adl_num, na.rm = TRUE),
+    WZC_Mean = mean(as.numeric(wzc)-1, na.rm = TRUE)
+
+  )
+
+cat("The descriptive comparison between Dropouts (N=742) and Completers (N=511)")
+cat("reveals that the dropout group had a higher mean Age (76.4 vs. 66.7 years)")
+cat("and higher baseline BPRS scores (83.0 vs. 64.4),")
+cat("while conversely presenting a lower mean baseline CDRSB (6.45 vs. 7.14) and lower ADL scores (6.04 vs. 10.5).")
+
+# SPAGHETTI PLOTS
+
+set.seed(123)
+random_ids <- sample(unique(alz_long$patid), 30)
+
+sample_data <- alz_long %>% 
+  filter(patid %in% random_ids)
+
+# CDRSB
+ggplot(sample_data, aes(x = time, y = cdrsb_bin, group = patid, color = as.factor(patid))) +
+  geom_line(alpha = 0.7) +
+  geom_point() +
+  theme_bw() +
+  theme(legend.position = "none") + 
+  labs(title = "Trajectories of CDRSB",
+       y = "CDRSB", x = "Year")
+
+ggplot(sample_data, aes(x = time, y = cdrsb_bin, group = patid)) +
+  geom_line(alpha = 0.2) +  
+  stat_summary(aes(group = 1), fun = mean, geom = "line", color = "red", size = 1.2) + # La tendència
+  labs(title = "Individual Trajectories + Mean",
+       y = "CDRSB_bin", x = "Year") +
+  theme_bw()
+
+# BPRS
+ggplot(sample_data, aes(x = time, y = bprs, group = patid, color = as.factor(patid))) +
+  geom_line(alpha = 0.7) +
+  geom_point() +
+  theme_bw() +
+  theme(legend.position = "none") + 
+  labs(title = "Trajectories of BPRS",
+       y = "BPRS", x = "Year")
+
+# CORRELATION MATRIX
+
+# CDRSB
+cor_data <- alz %>%
+  select(matches("cdrsb_bin\\d+$")) %>% 
+  na.omit() 
+
+cor_matrix <- round(cor(cor_data), 2)
+print(cor_matrix)
+
+corrplot(cor_matrix, 
+         title = "CDRSB Correlation Matrix",
+         method = "number", type = "upper")
+
+# BPRS
+cor_data <- alz %>%
+  select(matches("bprs\\d+$")) %>% 
+  na.omit() 
+
+cor_matrix <- round(cor(cor_data), 2)
+print(cor_matrix)
+
+corrplot(cor_matrix, 
+         title = "BPRS Correlation Matrix",
+         method = "number", type = "upper")
+
+# DISTRIBUTION
+
+# CDRSB
+ggplot(alz_long, aes(x = as.factor(cdrsb_bin), fill = as.factor(cdrsb_bin))) +
+  geom_bar() +                                
+  facet_wrap(~time) + 
+  labs(title = "CDRSB_bin", 
+       y = "Number of Patients",
+       x = "CDRSB_bin",
+       fill = "State") +
+  theme_bw()
+
+# BPRS
+ggplot(alz_long, aes(x = bprs)) +
+  geom_histogram(binwidth = 1, fill = "steelblue", color = "white") +
+  facet_wrap(~time) + 
+  labs(title = "BPRS's Distribution", y = "Number of Patients") +
+  theme_bw()
 
