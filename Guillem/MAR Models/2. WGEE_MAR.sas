@@ -89,19 +89,20 @@ data dropout_prep;
     /* For each visit, we look if it's observed */
 	array cdrsb_arr[0:6] cdrsb0-cdrsb6;
     do TIME = 0 to 5;
+    	CDRSB_PREV = cdrsb_arr[TIME];
         /* R = 1 if observed, R = 0 otherwise */
         R = (cdrsb_arr[TIME+1] ne .); 
         if cdrsb_arr[TIME] ne . then output; 
         if cdrsb_arr[TIME+1] = . then leave; 
     end;
-    keep PATID TIME R SEX AGE EDU BMI WZC ADL CDRSB0;
+    keep PATID TIME R SEX AGE EDU BMI WZC ADL JOB CDRSB_PREV;
 run;
 
 /* Dropout Model */
 /* To get the weights */
 proc logistic data=dropout_prep descending;
-    class SEX WZC EDU;
-    model R = TIME SEX AGE EDU BMI ADL WZC CDRSB0; 
+    class SEX WZC EDU JOB;
+    model R = TIME SEX AGE EDU BMI ADL WZC CDRSB_PREV; 
     output out=probs p=prob_obs;
     title "Dropout Model";
 run;
@@ -113,13 +114,36 @@ data probs_shifted;
     keep PATID TIME prob_obs;
 run;
 
+
+/* Weight = 1 / prob_obs
+
 data wgee_data;
 	merge alzheimer_long_centered (in=a) probs_shifted;
     by PATID TIME;
     if a;
     if TIME = 0 then W = 1;
     else if prob_obs > 0 then W = 1 / prob_obs;
-    else W = 1; 
+run;
+*/
+
+/* Cumulative Weight */
+/* If someone had 0.5 prob of leaving in the first two visits but didn't
+it's rarer 0.5*0.5=0.25, so its weight should be greater */
+/* https://faculty.washington.edu/peterg/Vaccine2006/articles/Preisser2002.pdf ; page 3038 */
+
+data wgee_data;
+    merge alzheimer_long_centered (in=a) probs_shifted;
+    by PATID TIME;
+    if a;
+
+    retain W_cum 1; 
+
+    if first.PATID then W_cum = 1;
+
+    if TIME > 0 and prob_obs > 0 then do;
+        W_cum = W_cum * (1 / prob_obs);
+    end;
+    W = W_cum;
 run;
 
 /* WGEE */
