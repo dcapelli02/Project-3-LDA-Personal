@@ -94,7 +94,7 @@ data gmpinfo_clean;
 run;
 
 /* 3. Pooling senza Intercept */
-proc mianalyze parms=glim_results covb=gmcovb parminfo=gmpinfo wcov bcov tcov;
+proc mianalyze parms=glim_results;
     modeleffects Intercept TIME BMI_STD TAUPET_STD
                                TIME * BMI TIME * TAUPET_STD ;
     ods output ParameterEstimates=mianalyze_results;
