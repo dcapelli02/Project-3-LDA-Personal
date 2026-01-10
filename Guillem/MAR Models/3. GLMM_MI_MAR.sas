@@ -82,7 +82,7 @@ run;
 
 /* The missing data at each time point is predicted using 
 regression models conditioned on previous observed values. */
-proc mi data=alzheimer25 out=mi_wide nimpute=10 seed=12345 noprint;
+proc mi data=alzheimer25 out=mi_wide nimpute=10 seed=11 noprint;
     class SEX; 
    	/* These gives warnings that indicate high multicollinearity or data sparsity (few patients) at later visits. 
    	SAS automatically drops redundant predictors to allow the imputation model to converge. */
@@ -143,6 +143,11 @@ proc glimmix data=mi_long_glmm method=RSPL; /*QUAD*/
     random intercept TIME / subject=PATID TYPE=UN;
     
     ods output ParameterEstimates=glmm_parms;
+    
+    output out=glmm_predictions 
+           pred(ilink)=PredProb 
+           lcl(ilink)=LowerCI 
+           ucl(ilink)=UpperCI;
 run;
 
 data glmm_ready;
@@ -174,7 +179,7 @@ data combined_final;
     by _Imputation_;
 run;
 
-
+/* Variance Between: variance of the estimate - Variance Within: mean(SE_^2) */
 proc mianalyze data=combined_final;
 
     modeleffects Intercept 
@@ -188,4 +193,29 @@ proc mianalyze data=combined_final;
                  SE_TIME_AGE_STD SE_TIME_ABPET_STD SE_TIME_ADL;
                  
     title "GLMM Results after Multiple Imputation";
+run;
+
+proc sql;
+    create table plot_data as
+    select TIME, 
+           mean(PredProb) as Mean_Prob,   
+           mean(LowerCI) as Mean_Lower,   
+           mean(UpperCI) as Mean_Upper    
+    from glmm_predictions
+    group by TIME;
+quit;
+
+/* GLMM Pooled Prediction & Fitted Variance Plot */
+title "GLMM Pooled Prediction & Fitted Variance";
+proc sgplot data=plot_data;
+
+    band x=TIME upper=Mean_Upper lower=Mean_Lower / 
+         transparency=0.5 legendlabel="95% Confidence Interval";
+    
+
+    series x=TIME y=Mean_Prob / 
+           lineattrs=(thickness=2 color=blue) legendlabel="Predicted Probability";
+    
+    yaxis label="Prob(CDRSB_CAT = 1)" min=0 max=1 grid;
+    xaxis label="Year" grid;
 run;
