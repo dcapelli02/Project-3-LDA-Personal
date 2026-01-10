@@ -195,6 +195,10 @@ proc mianalyze data=combined_final;
     title "GLMM Results after Multiple Imputation";
 run;
 
+/* ============================================================== */
+
+/* GLMM Pooled Prediction */
+
 proc sql;
     create table plot_data as
     select TIME, 
@@ -205,8 +209,7 @@ proc sql;
     group by TIME;
 quit;
 
-/* GLMM Pooled Prediction & Fitted Variance Plot */
-title "GLMM Pooled Prediction & Fitted Variance";
+title "GLMM Pooled Prediction";
 proc sgplot data=plot_data;
 
     band x=TIME upper=Mean_Upper lower=Mean_Lower / 
@@ -218,4 +221,28 @@ proc sgplot data=plot_data;
     
     yaxis label="Prob(CDRSB_CAT = 1)" min=0 max=1 grid;
     xaxis label="Year" grid;
+run;
+
+/* ============================================================== */
+
+/* Fitted Variance */
+
+/* Var = (p * (1-p)) */
+data plot_binomial_fitted;
+    set plot_data; 
+    
+    Fitted_Var_Binomial = Mean_Prob * (1 - Mean_Prob);
+run;
+
+title "GLMM with MI Fitted Variance Function";
+title2 "Variance = p * (1-p)";
+
+proc sgplot data=plot_binomial_fitted;
+
+    series x=TIME y=Fitted_Var_Binomial / 
+           lineattrs=(color=blue thickness=2) 
+           legendlabel="Fitted Variance";
+
+    yaxis label="Variance" grid min=0.2 max=0.25; 
+    xaxis label="Years" grid values=(0 to 6 by 1);
 run;
