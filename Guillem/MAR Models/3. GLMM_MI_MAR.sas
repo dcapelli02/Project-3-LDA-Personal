@@ -27,7 +27,7 @@ data alzheimer_long;
          and not missing(ABPET)
          and not missing(TAUPET) then do;
 
-            if CDRSB < 10 then CDRSB_CAT = 0;
+            if CDRSB <= 10 then CDRSB_CAT = 0;
             else CDRSB_CAT = 1;
 
             AGE_STD = (AGE - mean_age) / sd_age;
@@ -244,5 +244,35 @@ proc sgplot data=plot_binomial_fitted;
            legendlabel="Fitted Variance";
 
     yaxis label="Variance" grid min=0.2 max=0.25; 
+    xaxis label="Years" grid values=(0 to 6 by 1);
+run;
+
+/* ============================================================== */
+
+proc means data=alzheimer_long noprint nway;
+    class TIME;
+    var CDRSB_CAT;
+    output out=empirical_stats var=Empirical_Var;
+run;
+
+data plot_comparison;
+    merge plot_binomial_fitted empirical_stats;
+    by TIME;
+run;
+
+title "Empirical vs Fitted Variance GLMM-MI";
+
+proc sgplot data=plot_comparison;
+    /* GLMM-MI Variance */
+    series x=TIME y=Fitted_Var_Binomial / 
+           lineattrs=(color=blue thickness=2) 
+           legendlabel="Fitted Variance (Theoretical)";
+
+    /* Empirical Variance */
+    series x=TIME y=Empirical_Var / 
+            lineattrs=(color=red thickness=2) 
+            legendlabel="Empirical Variance (Observed)";
+
+    yaxis label="Variance" grid; 
     xaxis label="Years" grid values=(0 to 6 by 1);
 run;
