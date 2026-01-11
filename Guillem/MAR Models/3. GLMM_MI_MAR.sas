@@ -64,8 +64,8 @@ run;
 proc glimmix data=alzheimer_long_centered method=QUAD(QPOINTS=10);
     class PATID SEX;
     
-    model CDRSB_CAT(descending) = TIME BMI_STD TAUPET_STD
-                               TIME * BMI_STD TIME * TAUPET_STD
+    model CDRSB_CAT(descending) = TIME AGE_STD BMI_STD SEX ADL ABPET_STD TAUPET_STD
+	TIME*BMI_STD TIME*TAUPET_STD TIME*SEX TIME*AGE_STD TIME*ABPET_STD TIME*ADL
           / dist=binary link=logit solution;
           
     random intercept TIME/ subject=PATID TYPE=UN solution;
@@ -82,7 +82,7 @@ run;
 
 /* The missing data at each time point is predicted using 
 regression models conditioned on previous observed values. */
-proc mi data=alzheimer25 out=mi_wide nimpute=10 seed=11 noprint;
+proc mi data=alzheimer25 out=mi_wide nimpute=10 seed=3 noprint;
     class SEX; 
    	/* These gives warnings that indicate high multicollinearity or data sparsity (few patients) at later visits. 
    	SAS automatically drops redundant predictors to allow the imputation model to converge. */
