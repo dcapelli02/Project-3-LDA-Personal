@@ -126,6 +126,8 @@ proc mianalyze parms=mixparms;
     modeleffects Intercept TIME TRIAL SEX AGE EDU BMI JOB ADL WZC CDRSB0
                  TIME*AGE TIME*EDU TIME*JOB TIME*ADL TIME*CDRSB0;
     title "LME Multiple Imputation";
+    ods output ParameterEstimates = mi_params;
+    ods output VarianceInfo = mi_variance;
 run;
 
 /* ============================================================== */
@@ -180,70 +182,94 @@ run;
 proc means data=mi_cov_params noprint nway;
     class CovParm;
     var Estimate;
-    output out=mi_avg_cov mean=avg_est;
+    output out=rubin_cov mean=W var=B n=m;
+run;
+
+/* Rubin's Rule */
+data rubin_final_params;
+    set rubin_cov;
+    /* Total = W + (1 + 1/m)*B */
+    if m > 1 then TotVar_Rubin = W + (1 + (1/m))*B;
+    else TotVar_Rubin = W;
 run;
 
 data _null_;
-    set mi_avg_cov;
-    name = compress(upcase(CovParm));
-    if name = 'UN(1,1)'  then call symputx('d11_mi', avg_est);
-    if name = 'UN(2,1)'  then call symputx('d12_mi', avg_est);
-    if name = 'UN(2,2)'  then call symputx('d22_mi', avg_est);
-    if name = 'RESIDUAL' then call symputx('sig2_mi', avg_est);
+    set rubin_final_params;
+    if upcase(CovParm) = 'UN(1,1)'  then call symputx('d11', TotVar_Rubin);
+    if upcase(CovParm) = 'UN(2,1)'  then call symputx('d12', TotVar_Rubin);
+    if upcase(CovParm) = 'UN(2,2)'  then call symputx('d22', TotVar_Rubin);
+    if upcase(CovParm) = 'RESIDUAL' then call symputx('sig2', TotVar_Rubin);
 run;
 
-data teorica_mi;
+data teorica_mi_rubin;
     do TIME = 0 to 6 by 0.1;
-        fitted_var_mi = &d11_mi + 2*TIME*&d12_mi + (TIME**2)*&d22_mi + &sig2_mi;
+        fitted_var_mi = &d11 + 2*TIME*&d12 + (TIME**2)*&d22 + &sig2;
         output;
     end;
 run;
 
-data plot_mi_final;
-    set residus_ols teorica_mi;
+data plot_comparatiu_mi;
+    set residus_ols      (keep=TIME resid_ols)
+        teorica_mi_rubin (keep=TIME fitted_var_mi);
+    
     if resid_ols ne . then sq_resid_ols = resid_ols**2;
 run;
 
-proc sgplot data=plot_mi_final;
-    title "MI Analysis: Averaged Fitted Variance vs. Empirical Variance";
+proc sgplot data=plot_comparatiu_mi;
+    title "Variance Comparison: Empirical OLS vs. MI Pooled Model (Rubin)";
     
     /* OLS Residuals */
-    pbspline x=TIME y=sq_resid_ols / nomarkers lineattrs=(color=blue thickness=2) 
-             legendlabel="Empirical Variance (OLS Residuals)";
+    pbspline x=TIME y=sq_resid_ols / nomarkers lineattrs=(color=blue thickness=1) 
+             legendlabel="Empirical Variance (Original OLS)";
+             
+    /* Fitted Variance MI using Rubin's Rule */
+    series x=TIME y=fitted_var_mi / lineattrs=(color=green thickness=3 pattern=dash) 
+           legendlabel="Fitted Variance (MI Model - Rubin's Rule)";
     
-    /* Fitted Variance MI */
-    series x=TIME y=fitted_var_mi / lineattrs=(color=red thickness=3 pattern=dash) 
-           legendlabel="Averaged Fitted Variance (MI)";
-    
-    xaxis label="Years" values=(0 to 6 by 1);
-    yaxis label="Total Variance (BPRS)";
+    xaxis label="Years" values=(0 to 6 by 1) grid;
+    yaxis label="Total Variance (BPRS)" grid;
 run;
 
 /* ============================================================== */
 
-data plot_total;
-    set residus_ols    (keep=TIME resid_ols)
-        funcio_teorica (keep=TIME fitted_marginal_var)
-        teorica_mi     (keep=TIME fitted_var_mi);
-    
+/* Final Plot Comparing the OLS, Fitted Variance of LMM and LMM (MI) using Rubin's Rule */
+
+proc sort data=residus_ols; 
+    by TIME; 
+run;
+
+proc sort data=funcio_teorica; 
+    by TIME; 
+run;
+
+proc sort data=teorica_mi_rubin; 
+    by TIME; 
+run;
+
+data plot_triple_comparacio;
+    merge residus_ols       (keep=TIME resid_ols)
+          funcio_teorica    (keep=TIME fitted_marginal_var)
+          teorica_mi_rubin  (keep=TIME fitted_var_mi);
+    by TIME;
+
     if resid_ols ne . then sq_resid_ols = resid_ols**2;
 run;
 
-proc sgplot data=plot_total;
-    title "Variance Comparison: Empirical vs. LME vs. MI Models";
+proc sgplot data=plot_triple_comparacio;
+    title "Final Variance Comparison: OLS vs. Original LMM vs. MI-Pooled LMM";
     
     /* OLS Residuals */
-    pbspline x=TIME y=sq_resid_ols / nomarkers lineattrs=(color=blue thickness=2) 
-             legendlabel="Empirical Variance (OLS Residuals)";
+    pbspline x=TIME y=sq_resid_ols / nomarkers lineattrs=(color=blue thickness=1) 
+             legendlabel="Empirical Original (OLS)";
+             
+    /* LMM */
+    series x=TIME y=fitted_marginal_var / lineattrs=(color=red thickness=2 pattern=shortdash) 
+           legendlabel="Fitted Original (LMM No-MI)";
+
+    /* LLM with MI using Rubin's Rule */
+    series x=TIME y=fitted_var_mi / lineattrs=(color=green thickness=3) 
+           legendlabel="Fitted Pooled (LMM with MI - Rubin)";
     
-    /* Fitted Variance */
-    series x=TIME y=fitted_marginal_var / lineattrs=(color=red thickness=2) 
-           legendlabel="Fitted Variance (Original LME)";
-    
-    /* Fitted Variance MI */
-    series x=TIME y=fitted_var_mi / lineattrs=(color=green thickness=3 pattern=dash) 
-           legendlabel="Averaged Fitted Variance (MI Analysis)";
-    
-    xaxis label="Years" values=(0 to 6 by 1);
-    yaxis label="Total Variance (BPRS)";
+    xaxis label="Years" values=(0 to 6 by 1) grid;
+    yaxis label="Total Variance (BPRS)" grid;
 run;
