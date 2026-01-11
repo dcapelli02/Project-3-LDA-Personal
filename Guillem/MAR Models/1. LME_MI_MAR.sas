@@ -273,3 +273,68 @@ proc sgplot data=plot_triple_comparacio;
     xaxis label="Years" values=(0 to 6 by 1) grid;
     yaxis label="Total Variance (BPRS)" grid;
 run;
+
+/* ============================================================== */
+
+/* ============================================================== */
+/* 1. Càlcul de paràmetres: Mitjana (W) i Rubin (T)               */
+/* ============================================================== */
+
+proc means data=mi_cov_params noprint nway;
+    class CovParm;
+    var Estimate;
+    output out=pooled_stats mean=W var=B n=m;
+run;
+
+data _null_;
+    set pooled_stats;
+    /* Simple Average */
+    if upcase(CovParm) = 'UN(1,1)'  then call symputx('avg_d11', W);
+    if upcase(CovParm) = 'UN(2,1)'  then call symputx('avg_d12', W);
+    if upcase(CovParm) = 'UN(2,2)'  then call symputx('avg_d22', W);
+    if upcase(CovParm) = 'RESIDUAL' then call symputx('avg_sig2', W);
+    
+    /* Rubin's Rule */
+    if m > 1 then T = W + (1 + (1/m))*B; else T = W;
+    
+    if upcase(CovParm) = 'UN(1,1)'  then call symputx('rub_d11', T);
+    if upcase(CovParm) = 'UN(2,1)'  then call symputx('rub_d12', T);
+    if upcase(CovParm) = 'UN(2,2)'  then call symputx('rub_d22', T);
+    if upcase(CovParm) = 'RESIDUAL' then call symputx('rub_sig2', T);
+run;
+
+data funcions_mi_comparacio;
+    do TIME = 0 to 6 by 0.1;
+        var_avg = &avg_d11 + 2*TIME*&avg_d12 + (TIME**2)*&avg_d22 + &avg_sig2;
+        var_rubin = &rub_d11 + 2*TIME*&rub_d12 + (TIME**2)*&rub_d22 + &rub_sig2;
+        output;
+    end;
+run;
+
+proc sort data=residus_ols; by TIME; run;
+
+data plot_triple_definitiu;
+    merge residus_ols (keep=TIME resid_ols)
+          funcions_mi_comparacio;
+    by TIME;
+    if resid_ols ne . then sq_resid_ols = resid_ols**2;
+run;
+
+proc sgplot data=plot_triple_definitiu;
+    title "Final Validation: Empirical OLS vs. MI-Average vs. MI-Rubin";
+    
+    /* OLS Residuals */
+    pbspline x=TIME y=sq_resid_ols / nomarkers lineattrs=(color=blue thickness=1) 
+             legendlabel="Empirical (OLS)";
+             
+    /* MI-Average */
+    series x=TIME y=var_avg / lineattrs=(color=green thickness=2) 
+           legendlabel="Fitted MI (Average/Within)";
+
+    /* MI-Rubin */
+    series x=TIME y=var_rubin / lineattrs=(color=red thickness=2 pattern=dash) 
+           legendlabel="Total MI Variance (Rubin)";
+    
+    xaxis label="Years" values=(0 to 6 by 1) grid;
+    yaxis label="Total Variance (BPRS)" grid;
+run;
