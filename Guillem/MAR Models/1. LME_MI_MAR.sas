@@ -65,10 +65,12 @@ proc mixed data=alzheimer_long_centered method=REML covtest plots(maxpoints=none
     class PATID TRIAL SEX EDU JOB WZC / ref=first; 
     
     model BPRS = TIME TRIAL SEX AGE EDU BMI JOB ADL WZC CDRSB0
-    			TIME * AGE TIME * EDU TIME * JOB TIME * ADL TIME * CDRSB0/ solution cl; 
+    			TIME * AGE TIME * EDU TIME * JOB TIME * ADL TIME * CDRSB0/ solution cl 	outp=prediccions; 
     
 
     random intercept TIME / subject=PATID type=UN g;
+    
+	ods output CovParms=params_cov; 
     
     title "Model 1: Linear Mixed-Effects Model";
 run;
@@ -83,22 +85,16 @@ proc mi data=alzheimer25 out=mi_wide nimpute=10 seed=11 noprint;
     fcs nbiter=20; 
 run;
 
-proc sort data=alzheimer25; by PATID; run;
 proc sort data=mi_wide; by PATID _Imputation_; run;
 
 data mi_long_final;
-    merge mi_wide (in=a) 
-          alzheimer25 (keep=PATID bprs0-bprs6 rename=(bprs0=_o0 bprs1=_o1 bprs2=_o2 bprs3=_o3 bprs4=_o4 bprs5=_o5 bprs6=_o6));
-    by PATID;
-    if a;
+    set mi_wide;
     if _n_=1 then set stats; 
 
     array imp_arr[0:6] bprs0-bprs6;   
-    array orig_arr[0:6] _o0-_o6;     
+
     do TIME = 0 to 6;
         BPRS = imp_arr[TIME];
-
-        if orig_arr[TIME] = . then BPRS = BPRS + 5; 
 
         AGE_STD = (AGE - mean_age) / sd_age;
         BMI_STD = (BMI - mean_bmi) / sd_bmi;
@@ -122,11 +118,132 @@ proc mixed data=mi_long_final method=REML plots(MAXPOINTS=None);
                  
     random intercept TIME / subject=PATID type=UN;
     ods output SolutionF=mixparms; 
+    ods output CovParms=mi_cov_params;
 run;
 
 proc mianalyze parms=mixparms;
     class TRIAL SEX EDU JOB WZC;
     modeleffects Intercept TIME TRIAL SEX AGE EDU BMI JOB ADL WZC CDRSB0
                  TIME*AGE TIME*EDU TIME*JOB TIME*ADL TIME*CDRSB0;
-    title "Sensitivity Analysis: MNAR Shift (+5)";
+    title "LME Multiple Imputation";
+run;
+
+/* ============================================================== */
+
+/* OLS residuals */
+proc glm data=alzheimer_long_centered;
+    class TRIAL SEX EDU JOB WZC;
+    model BPRS = TIME TRIAL SEX AGE EDU BMI JOB ADL WZC CDRSB0
+                 TIME*AGE TIME*EDU TIME*JOB TIME*ADL TIME*CDRSB0;
+    output out=residus_ols r=resid_ols; 
+run;
+
+data _null_;
+    set params_cov;
+    name = compress(upcase(CovParm));
+    if name = 'UN(1,1)'  then call symputx('d11', Estimate);
+    if name = 'UN(2,1)'  then call symputx('d12', Estimate);
+    if name = 'UN(2,2)'  then call symputx('d22', Estimate);
+    if name = 'RESIDUAL' then call symputx('sigma2', Estimate);
+run;
+
+data funcio_teorica;
+    do TIME = 0 to 6 by 0.1;
+        fitted_marginal_var = &d11 + 2*TIME*&d12 + (TIME**2)*&d22 + &sigma2;
+        output;
+    end;
+run;
+
+data plot_final;
+    set residus_ols funcio_teorica; 
+    if resid_ols ne . then sq_resid_ols = resid_ols**2;
+run;
+
+proc sgplot data=plot_final;
+    title "Comparison: LME Fitted Variance vs. OLS Empirical Variance";
+    
+    /* OLS Residuals */
+    pbspline x=TIME y=sq_resid_ols / nomarkers lineattrs=(color=blue thickness=2) 
+             legendlabel="Empirical Variance (OLS Residuals)";
+    
+    /* Fitted Variance */
+    series x=TIME y=fitted_marginal_var / 
+           lineattrs=(color=red thickness=3 pattern=dash) 
+           legendlabel="Fitted Variance";
+    
+    xaxis label="Years" values=(0 to 6 by 1);
+    yaxis label="Total Variance (BPRS)";
+run;
+
+/* ============================================================== */
+
+proc means data=mi_cov_params noprint nway;
+    class CovParm;
+    var Estimate;
+    output out=mi_avg_cov mean=avg_est;
+run;
+
+data _null_;
+    set mi_avg_cov;
+    name = compress(upcase(CovParm));
+    if name = 'UN(1,1)'  then call symputx('d11_mi', avg_est);
+    if name = 'UN(2,1)'  then call symputx('d12_mi', avg_est);
+    if name = 'UN(2,2)'  then call symputx('d22_mi', avg_est);
+    if name = 'RESIDUAL' then call symputx('sig2_mi', avg_est);
+run;
+
+data teorica_mi;
+    do TIME = 0 to 6 by 0.1;
+        fitted_var_mi = &d11_mi + 2*TIME*&d12_mi + (TIME**2)*&d22_mi + &sig2_mi;
+        output;
+    end;
+run;
+
+data plot_mi_final;
+    set residus_ols teorica_mi;
+    if resid_ols ne . then sq_resid_ols = resid_ols**2;
+run;
+
+proc sgplot data=plot_mi_final;
+    title "MI Analysis: Averaged Fitted Variance vs. Empirical Variance";
+    
+    /* OLS Residuals */
+    pbspline x=TIME y=sq_resid_ols / nomarkers lineattrs=(color=blue thickness=2) 
+             legendlabel="Empirical Variance (OLS Residuals)";
+    
+    /* Fitted Variance MI */
+    series x=TIME y=fitted_var_mi / lineattrs=(color=red thickness=3 pattern=dash) 
+           legendlabel="Averaged Fitted Variance (MI)";
+    
+    xaxis label="Years" values=(0 to 6 by 1);
+    yaxis label="Total Variance (BPRS)";
+run;
+
+/* ============================================================== */
+
+data plot_total;
+    set residus_ols    (keep=TIME resid_ols)
+        funcio_teorica (keep=TIME fitted_marginal_var)
+        teorica_mi     (keep=TIME fitted_var_mi);
+    
+    if resid_ols ne . then sq_resid_ols = resid_ols**2;
+run;
+
+proc sgplot data=plot_total;
+    title "Variance Comparison: Empirical vs. LME vs. MI Models";
+    
+    /* OLS Residuals */
+    pbspline x=TIME y=sq_resid_ols / nomarkers lineattrs=(color=blue thickness=2) 
+             legendlabel="Empirical Variance (OLS Residuals)";
+    
+    /* Fitted Variance */
+    series x=TIME y=fitted_marginal_var / lineattrs=(color=red thickness=2) 
+           legendlabel="Fitted Variance (Original LME)";
+    
+    /* Fitted Variance MI */
+    series x=TIME y=fitted_var_mi / lineattrs=(color=green thickness=3 pattern=dash) 
+           legendlabel="Averaged Fitted Variance (MI Analysis)";
+    
+    xaxis label="Years" values=(0 to 6 by 1);
+    yaxis label="Total Variance (BPRS)";
 run;
