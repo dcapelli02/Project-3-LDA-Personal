@@ -9,6 +9,7 @@ library(lme4)       # GLMM
 library(geepack)    # GEE i WGEE 
 library(mice)       # Sensitivity Analysis
 library(corrplot)   # Matriu Correlació
+library(scales)     # Etiquetes llegibles
 
 
 #================================================================#
@@ -467,4 +468,74 @@ ggplot(alz_long, aes(x = bprs)) +
   facet_wrap(~time) + 
   labs(title = "BPRS's Distribution", y = "Number of Patients") +
   theme_bw()
+
+
+dropout_check <- alz_long %>%
+  mutate(observed = !is.na(cdrsb)) %>%  
+  group_by(id) %>%
+  arrange(time) %>%
+  summarise(
+    first_missing = ifelse(any(!observed),
+                           min(time[!observed]),
+                           NA),
+    non_monotone = ifelse(
+      is.na(first_missing),
+      FALSE,
+      any(observed & time > first_missing)
+    ),
+    .groups = "drop"
+  )
+
+cat("Table of Non-Monotone patterns (FALSE = Monotone, TRUE = Intermittent):")
+print(table(dropout_check$non_monotone))
+
+
+# Evolution of CDRSB by Dropout Time
+cdrsb_bin_analysis <- alz_long %>%
+  group_by(id) %>%
+  mutate(dropout_time = ifelse(all(!is.na(cdrsb)), 
+                               7,  # <--- Als Completers els diem "7" (o el que vulguis)
+                               min(time[is.na(cdrsb)]))) %>% # Als altres, el moment que marxen
+  ungroup()
+
+cdrsb_prop_group <- cdrsb_bin_analysis %>%
+  group_by(dropout_time, time) %>%
+  summarise(prop_positive = mean(cdrsb_bin == 1, na.rm = TRUE), .groups = "drop")
+
+# Plot
+ggplot(cdrsb_prop_group, aes(x = time, y = prop_positive, color = factor(dropout_time))) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_color_discrete(
+    name = "Dropout Time", 
+    labels = c("1", "2", "3", "4", "5", "6", "Completers")
+  ) +
+  labs(
+    x = "Visit (Year)",
+    y = "Proportion with CDRSB > 10",
+    color = "Dropout Time",
+    title = "Evolution of Binary CDRSB Outcome by Dropout Time"
+  ) +
+  theme_minimal()
+
+
+# Observed vs. Missing - Dichotomized CDRSB
+cdrsb_bin_prop <- alz_long_lag %>%
+  group_by(time, is_missing_next) %>%
+  summarise(prop_positive = mean(cdrsb_bin == 1, na.rm = TRUE), .groups = "drop")
+
+# Plot
+ggplot(cdrsb_bin_prop, aes(x = as.factor(time), y = prop_positive, color = is_missing_next, group = is_missing_next)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_color_manual(values = c("skyblue", "salmon"), labels = c("Observed", "Missing")) +
+  labs(
+    x = "Year",
+    y = "Proportion with CDRSB > 10",
+    color = "Status at t+1",
+    title = "Evidence for MAR: Binary CDRSB (Observed vs Missing Next)"
+  ) +
+  theme_minimal()
 
